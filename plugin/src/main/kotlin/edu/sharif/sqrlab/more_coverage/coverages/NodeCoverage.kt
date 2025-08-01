@@ -13,10 +13,10 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
         val cfg = ControlFlowGraphBuilder.build(function)
         val tests = mutableListOf<TestCase>()
 
-        for (node in cfg.nodes) {
+        for (node in cfg.nodes.filter { it.label.isNotBlank() }) {
             tests.add(
                 TestCase(
-                    name = "node_${node.id}",
+                    name = "${function.name ?: "func"}_covers_${node.id}",
                     description = "Test for node ${node.id}: ${node.label.take(30).replace("\n", " ")}"
                 )
             )
