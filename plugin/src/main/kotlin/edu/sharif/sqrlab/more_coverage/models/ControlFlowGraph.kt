@@ -39,7 +39,7 @@ class ControlFlowGraph {
     val nodes = mutableListOf<CFGNode>()
 
     // All directed edges (control transitions) in the CFG
-    val edges = mutableListOf<CFGEdge>()
+    val edges = mutableSetOf<CFGEdge>()
 
     /**
      * Adds a node to the CFG.
@@ -54,6 +54,11 @@ class ControlFlowGraph {
     fun addEdge(from: CFGNode, to: CFGNode) {
         edges.add(CFGEdge(from, to))
     }
+
+    /**
+     * Returns a list of all edfes.
+     */
+    fun ControlFlowGraph.getEdges(): Set<CFGEdge> = edges
 
     /**
      * Returns a list of nodes that are directly reachable from the given node.

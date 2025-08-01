@@ -28,7 +28,17 @@
     <extensions defaultExtensionNs="com.intellij">
         <intentionAction>
             <language>Python</language>
-            <className>edu.sharif.sqrlab.more_coverage.coverages.SimpleStatementCoverage</className>
+            <className>edu.sharif.sqrlab.more_coverage.coverages.NodeCoverage</className>
+            <category>SDK intentions</category>
+        </intentionAction>
+        <intentionAction>
+            <language>Python</language>
+            <className>edu.sharif.sqrlab.more_coverage.coverages.EdgeCoverage</className>
+            <category>SDK intentions</category>
+        </intentionAction>
+        <intentionAction>
+            <language>Python</language>
+            <className>edu.sharif.sqrlab.more_coverage.coverages.EdgePairCoverage</className>
             <category>SDK intentions</category>
         </intentionAction>
     </extensions>

@@ -7,14 +7,21 @@ import edu.sharif.sqrlab.more_coverage.models.CFGNode
 import edu.sharif.sqrlab.more_coverage.models.TestCase
 
 /**
- * NodeCoverage generates test cases that cover all nodes
+ * EdgeCoverage generates test cases that cover all edges
  * in the control flow graph (CFG) of a Python function.
  * Uses BFS to explore paths and selects a minimal set of paths.
  */
-class NodeCoverage : AbstractCoverageTestGeneratorAction() {
+class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
 
-    override val name: String = "NodeCoverage"
+    override val name: String = "EdgeCoverage"
 
+    /**
+     * Generates a minimal set of test cases covering all edges
+     * in the function's CFG.
+     *
+     * @param function The PyFunctionImpl to analyze
+     * @return Iterable<TestCase> covering all edges
+     */
     override fun generate(function: PyFunctionImpl): Iterable<TestCase> {
         val testCases = mutableListOf<TestCase>()
 
@@ -25,7 +32,10 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
         val nodesStr = cfg.nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
         val edgesStr = cfg.edges.joinToString(", ") { "${it.from.id}->${it.to.id}" }
 
-        // Step 2: BFS to collect all paths from sources to sinks
+        // Step 2: Collect all edges as explicit pairs
+        val allEdges = cfg.edges.map { it.from to it.to }.toMutableSet()
+
+        // Step 3: BFS to collect all paths from sources to sinks
         val sources = cfg.nodes.filter { node -> cfg.edges.none { it.to == node } }
         val allPaths = mutableListOf<List<CFGNode>>()
         val queue = ArrayDeque<List<CFGNode>>()
@@ -37,8 +47,7 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
             val successors = cfg.edges.filter { it.from == lastNode }.map { it.to }
 
             if (successors.isEmpty()) {
-                // Sink reached; store the complete path
-                allPaths.add(path)
+                allPaths.add(path) // Sink reached
             } else {
                 for (succ in successors) {
                     queue.add(path + succ)
@@ -46,23 +55,34 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
             }
         }
 
-        // Step 3: Greedy selection of minimal paths covering all nodes
-        val nodesToCover = cfg.nodes.toMutableSet()
+        // Step 4: Greedy selection of minimal paths covering all edges
+        val edgesToCover = allEdges.toMutableSet()
         val selectedPaths = mutableListOf<List<CFGNode>>()
 
-        while (nodesToCover.isNotEmpty()) {
-            // Pick the path that covers the most uncovered nodes
-            val bestPath = allPaths.maxByOrNull { path -> path.count { it in nodesToCover } } ?: break
+        while (edgesToCover.isNotEmpty()) {
+            // Pick path covering the most yet-uncovered edges
+            val bestPath = allPaths.maxByOrNull { path ->
+                path.zip(path.drop(1)).count { it in edgesToCover }
+            } ?: break
+
             selectedPaths.add(bestPath)
-            nodesToCover.removeAll(bestPath)
+
+            // Remove edges covered by this path
+            edgesToCover.removeAll(bestPath.zip(bestPath.drop(1)))
+
             allPaths.remove(bestPath)
         }
 
-        // Step 4: Generate TestCase objects for selected paths
+        // Step 5: Generate TestCase objects for selected paths
         for ((index, path) in selectedPaths.withIndex()) {
-            val pathDesc = path.joinToString(" -> ") { "${it.id}:${it.label.replace("\n", " ")}" }
+            val pathDesc = path.joinToString(" -> ") { it.id }
             val comment = "Nodes: $nodesStr\n# Edges: $edgesStr\n# Path $index: $pathDesc"
-            testCases.add(TestCase("${function.name ?: "func"}_node_$index", comment))
+            testCases.add(
+                TestCase(
+                    name = "${function.name ?: "func"}_edge_$index",
+                    description = comment
+                )
+            )
         }
 
         return testCases
