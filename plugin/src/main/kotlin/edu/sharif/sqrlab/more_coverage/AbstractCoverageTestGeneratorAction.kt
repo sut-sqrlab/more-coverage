@@ -7,12 +7,8 @@ import com.intellij.openapi.vfs.findOrCreateFile
 import com.intellij.openapi.vfs.writeText
 import com.intellij.psi.PsiElement
 import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.util.elementType
-import com.intellij.psi.util.parents
-import com.jetbrains.python.psi.PyFunction
 import com.jetbrains.python.psi.impl.PyFunctionImpl
 import edu.sharif.sqrlab.more_coverage.models.TestCase
-import training.featuresSuggester.getParentOfType
 
 abstract class AbstractCoverageTestGeneratorAction : PsiElementBaseIntentionAction() {
 
@@ -25,8 +21,8 @@ abstract class AbstractCoverageTestGeneratorAction : PsiElementBaseIntentionActi
     }
 
     override fun invoke(project: Project, editor: Editor?, element: PsiElement) {
-        val file = element.containingFile.virtualFile;
-        val function = element.getParentOfType<PyFunctionImpl>() ?: return
+        val file = element.containingFile.virtualFile
+        val function = PsiTreeUtil.getParentOfType(element, PyFunctionImpl::class.java, false) ?: return
         val testFile = file.parent.findOrCreateFile("test_${element.containingFile.name}")
 
         val sb = StringBuilder()
@@ -41,12 +37,12 @@ abstract class AbstractCoverageTestGeneratorAction : PsiElementBaseIntentionActi
                 .appendLine("():")
                 // TODO: check whether the editor is set to use tabs or spaces
                 .appendLine("    pass")
-                .appendLine();
+                .appendLine()
         }
 
         testFile.writeText(sb.toString())
     }
 
-    abstract val name: String;
-    abstract fun generate(function: PyFunctionImpl): Iterable<TestCase>;
+    abstract val name: String
+    abstract fun generate(function: PyFunctionImpl): Iterable<TestCase>
 }
