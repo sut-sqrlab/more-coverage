@@ -41,5 +41,10 @@
             <className>edu.sharif.sqrlab.more_coverage.coverages.EdgePairCoverage</className>
             <category>SDK intentions</category>
         </intentionAction>
+        <intentionAction>
+            <language>Python</language>
+            <className>edu.sharif.sqrlab.more_coverage.coverages.PrimePathCoverage</className>
+            <category>SDK intentions</category>
+        </intentionAction>
     </extensions>
 </idea-plugin>
