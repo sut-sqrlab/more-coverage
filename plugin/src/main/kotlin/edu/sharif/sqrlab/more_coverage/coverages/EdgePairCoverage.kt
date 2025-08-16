@@ -8,26 +8,20 @@ import edu.sharif.sqrlab.more_coverage.models.TestCase
 
 /**
  * EdgePairCoverage generates test cases that cover all edge-pairs
- * (paths of length 2) in the control flow graph (CFG) of a Python function.
- * Uses a greedy algorithm to select a minimal set of paths covering all edge-pairs.
+ * (paths of length 2) in the CFG of a Python function.
+ * Handles loops by including back edges once.
  */
 class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
 
     override val name: String = "EdgePairCoverage"
 
-    /**
-     * Generates a minimal set of test cases to cover all edge-pairs in the function's CFG.
-     *
-     * @param function The PyFunctionImpl to analyze.
-     * @return Iterable<TestCase> covering all edge-pairs.
-     */
     override fun generate(function: PyFunctionImpl): Iterable<TestCase> {
         val testCases = mutableListOf<TestCase>()
 
-        // Step 0: Build the control flow graph (CFG) from the Python function
+        // Step 0: Build the CFG
         val cfg = ControlFlowGraphBuilder.build(function)
 
-        // Step 1: Build strings for debugging comments
+        // Step 1: Build strings for debugging
         val nodesStr = cfg.nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
         val edgesStr = cfg.edges.joinToString(", ") { "${it.from.id}->${it.to.id}" }
 
@@ -36,9 +30,9 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
             cfg.edges.filter { it.from == first.to }.map { second ->
                 Triple(first.from, first.to, second.to)
             }
-        }.toMutableSet() // Use a set to avoid duplicates
+        }.toMutableSet() // remove duplicates
 
-        // Step 3: BFS to generate all possible paths from source nodes
+        // Step 3: BFS to generate paths including back edges once
         val sources = cfg.nodes.filter { node -> cfg.edges.none { it.to == node } }
         val allPaths = mutableListOf<List<CFGNode>>()
         val queue = ArrayDeque<List<CFGNode>>()
@@ -48,11 +42,15 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
             val path = queue.removeFirst()
             val lastNode = path.last()
             val successors = cfg.edges.filter { it.from == lastNode }.map { it.to }
+
             if (successors.isEmpty()) {
-                allPaths.add(path)
+                allPaths.add(path) // Sink reached
             } else {
                 for (succ in successors) {
-                    queue.add(path + succ)
+                    // Allow back edge only once
+                    if (succ !in path || isLoopEdge(cfg, lastNode, succ)) {
+                        queue.add(path + succ)
+                    }
                 }
             }
         }
@@ -62,9 +60,8 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
         val selectedPaths = mutableListOf<List<CFGNode>>()
 
         while (pairsToCover.isNotEmpty()) {
-            // Find the path that covers the most yet-uncovered edge-pairs
             val bestPath = allPaths.maxByOrNull { path ->
-                // Build edge-pairs along the path
+                // Edge-pairs along path
                 val pathPairs = mutableSetOf<Triple<CFGNode, CFGNode, CFGNode>>()
                 for (i in 0 until path.size - 2) {
                     pathPairs.add(Triple(path[i], path[i + 1], path[i + 2]))
@@ -72,15 +69,14 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
                 pathPairs.count { it in pairsToCover }
             } ?: break
 
-            // Mark the pairs covered by this path as done
             val coveredPairs = mutableSetOf<Triple<CFGNode, CFGNode, CFGNode>>()
             for (i in 0 until bestPath.size - 2) {
                 val t = Triple(bestPath[i], bestPath[i + 1], bestPath[i + 2])
                 if (t in pairsToCover) coveredPairs.add(t)
             }
             pairsToCover.removeAll(coveredPairs)
-
             selectedPaths.add(bestPath)
+            allPaths.remove(bestPath)
         }
 
         // Step 5: Generate TestCase objects for each selected path
@@ -96,5 +92,13 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
         }
 
         return testCases
+    }
+
+    /**
+     * Determines if an edge is a back edge forming a loop.
+     * Used to allow traversing back edges once for edge-pair coverage.
+     */
+    private fun isLoopEdge(cfg: edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph, from: CFGNode, to: CFGNode): Boolean {
+        return cfg.edges.any { it.from == from && it.to == to && cfg.nodes.indexOf(to) <= cfg.nodes.indexOf(from) }
     }
 }

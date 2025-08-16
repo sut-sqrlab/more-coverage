@@ -18,6 +18,8 @@ import edu.sharif.sqrlab.more_coverage.models.TestCase
  *    - Start from the longest finished path.
  *    - Extend left and right using other finished paths without duplicating subpaths.
  * 4. Generate test cases for all resulting maximal prime paths.
+ *
+ * Back edges are included **once** in a path to avoid infinite loops.
  */
 class PrimePathCoverage : AbstractCoverageTestGeneratorAction() {
 
@@ -39,45 +41,32 @@ class PrimePathCoverage : AbstractCoverageTestGeneratorAction() {
         val nodesStr = nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
         val edgesStr = edges.joinToString(", ") { "${it.first.id}->${it.second.id}" }
 
-        // Step 2: Initialize paths starting from source nodes
-        var pathsToExtend: MutableList<List<CFGNode>> = sources.map { listOf(it) }.toMutableList()
-        val finishedPaths = mutableListOf<List<CFGNode>>() // Paths that reached sink or self-loop
-        val visitedPaths = mutableSetOf<List<CFGNode>>()   // Avoid duplicate paths
+        // Step 2: Initialize BFS queue with paths starting from source nodes
+        val finishedPaths = mutableListOf<List<CFGNode>>() // Paths that reached sink or back edge
+        val queue = ArrayDeque<List<CFGNode>>()
+        sources.forEach { queue.add(listOf(it)) }
 
-        // Step 3: Enumerate paths iteratively
-        while (pathsToExtend.isNotEmpty()) {
-            val newPaths = mutableListOf<List<CFGNode>>()
+        // Step 3: Enumerate paths iteratively with back-edge-once logic
+        while (queue.isNotEmpty()) {
+            val path = queue.removeFirst()
+            val lastNode = path.last()
 
-            for (path in pathsToExtend) {
-                val lastNode = path.last()
+            // Get successors of the last node
+            val successors = edges.filter { it.first == lastNode }.map { it.second }
 
-                // Detect self-loop (A -> A)
-                val lastTwo = path.takeLast(2)
-                if (lastTwo.size == 2 && lastTwo[0] == lastTwo[1]) {
-                    finishedPaths.add(path)
-                    continue
-                }
-
-                // Get successors
-                val successors = edges.filter { it.first == lastNode }.map { it.second }
-
-                if (successors.isEmpty()) {
-                    // Sink reached -> finished path
-                    finishedPaths.add(path)
-                } else {
-                    // Extend path for each successor
-                    for (succ in successors) {
-                        val extended = path + succ
-                        if (extended !in visitedPaths) {
-                            newPaths.add(extended)
-                            visitedPaths.add(extended)
-                        }
+            if (successors.isEmpty()) {
+                // Sink reached -> finished path
+                finishedPaths.add(path)
+            } else {
+                // Extend path for each successor
+                for (succ in successors) {
+                    // Count visits to allow back edge once
+                    val timesVisited = path.count { it == succ }
+                    if (timesVisited < 2) {
+                        queue.add(path + succ)
                     }
                 }
             }
-
-            // Update paths to extend for next iteration
-            pathsToExtend = newPaths
         }
 
         // Step 4: Greedy extension of finished paths to form maximal prime paths

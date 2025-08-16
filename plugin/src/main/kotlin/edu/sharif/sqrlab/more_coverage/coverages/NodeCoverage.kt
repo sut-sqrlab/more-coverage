@@ -8,8 +8,8 @@ import edu.sharif.sqrlab.more_coverage.models.TestCase
 
 /**
  * NodeCoverage generates test cases that cover all nodes
- * in the control flow graph (CFG) of a Python function.
- * Uses BFS to explore paths and selects a minimal set of paths.
+ * in the CFG of a Python function.
+ * Handles loops by including nodes reachable via back edges at least once.
  */
 class NodeCoverage : AbstractCoverageTestGeneratorAction() {
 
@@ -37,11 +37,13 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
             val successors = cfg.edges.filter { it.from == lastNode }.map { it.to }
 
             if (successors.isEmpty()) {
-                // Sink reached; store the complete path
-                allPaths.add(path)
+                allPaths.add(path) // Sink reached
             } else {
                 for (succ in successors) {
-                    queue.add(path + succ)
+                    if (succ !in path || isLoopEdge(cfg, lastNode, succ)) {
+                        // Allow back edge once
+                        queue.add(path + succ)
+                    }
                 }
             }
         }
@@ -51,8 +53,10 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
         val selectedPaths = mutableListOf<List<CFGNode>>()
 
         while (nodesToCover.isNotEmpty()) {
-            // Pick the path that covers the most uncovered nodes
-            val bestPath = allPaths.maxByOrNull { path -> path.count { it in nodesToCover } } ?: break
+            val bestPath = allPaths.maxByOrNull { path ->
+                path.count { it in nodesToCover }
+            } ?: break
+
             selectedPaths.add(bestPath)
             nodesToCover.removeAll(bestPath)
             allPaths.remove(bestPath)
@@ -66,5 +70,13 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
         }
 
         return testCases
+    }
+
+    /**
+     * Determines if an edge is a back edge forming a loop.
+     * Used to allow traversing back edges once for node coverage.
+     */
+    private fun isLoopEdge(cfg: edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph, from: CFGNode, to: CFGNode): Boolean {
+        return cfg.edges.any { it.from == from && it.to == to && cfg.nodes.indexOf(to) <= cfg.nodes.indexOf(from) }
     }
 }

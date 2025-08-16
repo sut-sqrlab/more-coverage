@@ -1,6 +1,5 @@
 package edu.sharif.sqrlab.more_coverage.builders
 
-import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.python.psi.*
 import edu.sharif.sqrlab.more_coverage.models.CFGNode
 import edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph
@@ -8,75 +7,91 @@ import edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph
 /**
  * Builds a Control Flow Graph (CFG) from a Python function.
  *
- * This builder traverses the statements of a PyFunction, creating nodes
- * representing statements or control structures and connecting them to
- * represent control flow paths.
+ * Features:
+ * 1. Consecutive linear statements are merged into a single CFG node.
+ * 2. Handles control flow structures: if, while, for, return.
+ * 3. Includes debug logging for nodes and edges.
  */
 object ControlFlowGraphBuilder {
 
     /**
-     * Constructs the CFG for the given Python function.
+     * Entry point for building the CFG of a Python function.
      *
-     * @param function The PyFunction to analyze.
-     * @return A ControlFlowGraph representing the function's control flow.
+     * @param function PyFunction to build CFG for
+     * @return ControlFlowGraph representing the function
      */
     fun build(function: PyFunction): ControlFlowGraph {
         val graph = ControlFlowGraph()
+        println("=== Build CFG for function: ${function.name} ===")
 
-        // Retrieve all top-level statements inside the function body
         val statements = function.statementList.statements
-
-        // No artificial entry node — start with empty prevNodes list
         var prevNodes = emptyList<CFGNode>()
 
-        // Process each statement in sequence, chaining control flow nodes
-        for (stmt in statements) {
-            // Connect current statement with previous nodes
-            prevNodes = connectStatement(graph, stmt, prevNodes, null)
-        }
+        // Connect all top-level statements
+        prevNodes = connectBlock(graph, statements, prevNodes)
 
-        // No artificial exit node — do not connect leftover nodes
-
+        println("=== Finished CFG for function: ${function.name} ===")
+        println("Total nodes: ${graph.nodes.size}, Total edges: ${graph.edges.size}")
         return graph
     }
 
     /**
-     * Dispatches statement handling based on the statement's type.
+     * Connects a single statement into the CFG, dispatching based on type.
      *
-     * @param graph The CFG under construction.
-     * @param stmt The current PyStatement to process.
-     * @param prevNodes Nodes from which control flows into this statement.
-     * @param exitNode Nullable artificial exit node (no longer used).
-     * @return List of nodes representing possible exit points after this statement.
+     * @param graph CFG being built
+     * @param stmt Statement to connect
+     * @param prevNodes List of previous CFG nodes (predecessors)
+     * @param exitNode Optional exit node for structured blocks
+     * @return List of CFGNodes representing exits from this statement
      */
     private fun connectStatement(
         graph: ControlFlowGraph,
         stmt: PyStatement,
         prevNodes: List<CFGNode>,
-        exitNode: CFGNode? // now nullable because we removed artificial exit node
+        exitNode: CFGNode?
     ): List<CFGNode> = when (stmt) {
-        // Handle each control structure by delegating to specific handlers
         is PyIfStatement -> handleIf(graph, stmt, prevNodes, exitNode)
         is PyWhileStatement -> handleWhile(graph, stmt, prevNodes, exitNode)
         is PyForStatement -> handleFor(graph, stmt, prevNodes, exitNode)
         is PyReturnStatement -> handleReturn(graph, stmt, prevNodes)
-        else -> {
-            // Linear/simple statement (e.g., assignment, expression)
-            val node = CFGNode("n${graph.nodes.size}", stmt.text, stmt)
-            graph.addNode(node)
-            // Connect all previous nodes to this node, if any
-            if (prevNodes.isNotEmpty()) {
-                prevNodes.forEach { graph.addEdge(it, node) }
-            }
-            // Return this node as the new previous node for subsequent statements
-            listOf(node)
-        }
+        else -> handleLinear(graph, arrayOf(stmt), prevNodes) // simple statement
     }
 
     /**
-     * Handles return statements which terminate flow on this path.
+     * Handles linear (non-control-flow) statements by merging them into a single CFG node.
      *
-     * @return empty list, as no further statements follow return.
+     * @param graph CFG being built
+     * @param stmts Array of consecutive linear statements
+     * @param prevNodes Predecessor nodes
+     * @return List containing the created CFGNode
+     */
+    private fun handleLinear(
+        graph: ControlFlowGraph,
+        stmts: Array<out PyStatement>,
+        prevNodes: List<CFGNode>
+    ): List<CFGNode> {
+        // Merge statements into one label separated by semicolon
+        val label = stmts.joinToString(" ; ") { it.text }
+        val node = CFGNode("n${graph.nodes.size}", label, stmts.first())
+        graph.addNode(node)
+        println("Added LINEAR node: ${node.label}")
+
+        // Connect previous nodes to this new node
+        prevNodes.forEach {
+            graph.addEdge(it, node)
+            println("Edge: ${it.label} -> ${node.label}")
+        }
+
+        return listOf(node)
+    }
+
+    /**
+     * Handles a return statement, creating a CFG node and linking predecessors.
+     *
+     * @param graph CFG being built
+     * @param stmt Return statement
+     * @param prevNodes Predecessor nodes
+     * @return empty list since return has no successors
      */
     private fun handleReturn(
         graph: ControlFlowGraph,
@@ -85,18 +100,24 @@ object ControlFlowGraphBuilder {
     ): List<CFGNode> {
         val node = CFGNode("n${graph.nodes.size}", stmt.text, stmt)
         graph.addNode(node)
-        if (prevNodes.isNotEmpty()) {
-            prevNodes.forEach { graph.addEdge(it, node) }
+        println("Added RETURN node: ${node.label}")
+
+        prevNodes.forEach {
+            graph.addEdge(it, node)
+            println("Edge: ${it.label} -> ${node.label}")
         }
-        // Return statements terminate control flow, so no successors
-        return emptyList()
+
+        return emptyList() // no successors
     }
 
     /**
-     * Handles if-else branching statements.
+     * Handles an if statement, creating a condition node and connecting then/else blocks.
      *
-     * Creates a condition node, then recursively connects
-     * true and false branches.
+     * @param graph CFG being built
+     * @param stmt If statement
+     * @param prevNodes Predecessor nodes
+     * @param exitNode Optional exit node
+     * @return List of exit nodes from the if-else
      */
     private fun handleIf(
         graph: ControlFlowGraph,
@@ -104,30 +125,37 @@ object ControlFlowGraphBuilder {
         prevNodes: List<CFGNode>,
         exitNode: CFGNode?
     ): List<CFGNode> {
+        // Create CFG node for the if condition
         val conditionText = stmt.ifPart.condition?.text ?: "if"
         val ifNode = CFGNode("n${graph.nodes.size}", conditionText, stmt)
         graph.addNode(ifNode)
-        if (prevNodes.isNotEmpty()) {
-            prevNodes.forEach { graph.addEdge(it, ifNode) }
+        println("Added IF node: ${ifNode.label}")
+
+        // Connect predecessors to the if condition node
+        prevNodes.forEach {
+            graph.addEdge(it, ifNode)
+            println("Edge: ${it.label} -> ${ifNode.label}")
         }
 
-        // Connect true branch statements starting from ifNode
-        val thenNodes = connectBlock(graph, stmt.ifPart.statementList.statements, listOf(ifNode), exitNode)
-
-        // Connect else branch if exists; otherwise consider fallthrough
+        // Connect the "then" block
+        val thenNodes = connectBlock(graph, stmt.ifPart.statementList.statements, listOf(ifNode))
+        // Connect the "else" block (or use condition node if none)
         val elseNodes = stmt.elsePart?.statementList?.statements?.let {
-            connectBlock(graph, it, listOf(ifNode), exitNode)
+            connectBlock(graph, it, listOf(ifNode))
         } ?: listOf(ifNode)
 
-        // Combine possible exit points from both branches
+        println("IF exits: then=${thenNodes.map { it.label }}, else=${elseNodes.map { it.label }}")
         return thenNodes + elseNodes
     }
 
     /**
-     * Handles while loops.
+     * Handles a while loop, creating a condition node and connecting the body with back edges.
      *
-     * Creates a condition node, connects the loop body,
-     * and adds back edges for looping behavior.
+     * @param graph CFG being built
+     * @param stmt While statement
+     * @param prevNodes Predecessor nodes
+     * @param exitNode Optional exit node
+     * @return List of nodes representing the loop's exit (false path)
      */
     private fun handleWhile(
         graph: ControlFlowGraph,
@@ -135,28 +163,41 @@ object ControlFlowGraphBuilder {
         prevNodes: List<CFGNode>,
         exitNode: CFGNode?
     ): List<CFGNode> {
+        // Create node for the loop condition
         val conditionText = stmt.whilePart?.condition?.text ?: "while"
         val condNode = CFGNode("n${graph.nodes.size}", conditionText, stmt)
         graph.addNode(condNode)
-        if (prevNodes.isNotEmpty()) {
-            prevNodes.forEach { graph.addEdge(it, condNode) }
+        println("Added WHILE condition node: ${condNode.label}")
+
+        // Connect predecessors to the condition
+        prevNodes.forEach {
+            graph.addEdge(it, condNode)
+            println("Edge: ${it.label} -> ${condNode.label}")
         }
 
-        // Connect body statements starting from condNode
-        val bodyNodes = connectBlock(graph, stmt.whilePart?.statementList?.statements ?: emptyArray(), listOf(condNode), exitNode)
+        // Connect loop body
+        val bodyStatements = stmt.whilePart?.statementList?.statements ?: emptyArray()
+        println("WHILE body statements count: ${bodyStatements.size}")
+        val bodyExitNodes = connectBlock(graph, bodyStatements, listOf(condNode))
 
-        // Add edges back from body nodes to condition to represent loop
-        bodyNodes.forEach { graph.addEdge(it, condNode) }
+        // Back edges from body to condition
+        bodyExitNodes.forEach {
+            graph.addEdge(it, condNode)
+            println("Back edge from body: ${it.label} -> while ${condNode.label}")
+        }
 
-        // The loop condition node itself is the exit point when loop terminates
-        return listOf(condNode)
+        println("WHILE loop exits at: ${condNode.label}")
+        return listOf(condNode) // false path exit
     }
 
     /**
-     * Handles for loops.
+     * Handles a for loop, creating a condition node and connecting the body with back edges.
      *
-     * Extracts loop target and iterable, creates a condition node,
-     * connects loop body, and loops back.
+     * @param graph CFG being built
+     * @param stmt For statement
+     * @param prevNodes Predecessor nodes
+     * @param exitNode Optional exit node
+     * @return List of nodes representing the loop's exit (false path)
      */
     private fun handleFor(
         graph: ControlFlowGraph,
@@ -165,58 +206,73 @@ object ControlFlowGraphBuilder {
         exitNode: CFGNode?
     ): List<CFGNode> {
         val forPart = stmt.forPart
-
-        // Extract the iterable expression (exclude target)
-        val iterable = forPart?.children
-            ?.filterIsInstance<PyExpression>()
-            ?.firstOrNull { it != forPart.target }
-
-        // Extract the body block of statements
-        val suite = forPart?.children?.find { it is PyStatementList } as? PyStatementList
-
         val targetText = forPart?.target?.text ?: "target"
-        val iterableText = iterable?.text ?: "iterable"
-
+        val iterableText = forPart?.children
+            ?.filterIsInstance<PyExpression>()
+            ?.firstOrNull { it != forPart.target }?.text ?: "iterable"
         val conditionText = "for $targetText in $iterableText"
         val forNode = CFGNode("n${graph.nodes.size}", conditionText, stmt)
         graph.addNode(forNode)
+        println("Added FOR node: ${forNode.label}")
 
-        if (prevNodes.isNotEmpty()) {
-            prevNodes.forEach { graph.addEdge(it, forNode) }
+        // Connect predecessors to the for loop
+        prevNodes.forEach {
+            graph.addEdge(it, forNode)
+            println("Edge: ${it.label} -> ${forNode.label}")
         }
 
-        // Connect loop body statements starting from forNode
-        val bodyStatements = suite?.statements ?: emptyArray()
-        val bodyNodes = connectBlock(graph, bodyStatements, listOf(forNode), exitNode)
+        // Connect loop body
+        val suite: PyStatementList? = forPart?.statementList
+            ?: (forPart?.children?.find { it is PyStatementList } as? PyStatementList)
 
-        // Loop back edges from body nodes to forNode to represent iteration
-        bodyNodes.forEach { graph.addEdge(it, forNode) }
+        val bodyNodes = connectBlock(graph, suite?.statements ?: emptyArray(), listOf(forNode))
 
-        // Exit node for loop (after iteration finishes) is forNode itself
+        // Back edges from body to loop condition
+        bodyNodes.forEach {
+            graph.addEdge(it, forNode)
+            println("Back edge from body: ${it.label} -> for ${forNode.label}")
+        }
+
         return listOf(forNode)
     }
 
     /**
-     * Connects a sequence of statements in a block,
-     * chaining their control flow nodes linearly.
+     * Connects a sequence of statements (block) into the CFG.
+     * Consecutive linear statements are buffered and merged into single nodes.
      *
-     * @param graph The CFG being constructed.
-     * @param stmts Array of statements to connect.
-     * @param entryPoints Nodes where control flow enters this block.
-     * @param exitNode Artificial exit node, nullable and unused here.
-     * @return List of possible exit nodes after the block.
+     * @param graph CFG being built
+     * @param stmts Statements in the block
+     * @param entryPoints CFG nodes that are predecessors to this block
+     * @return List of exit nodes from the block
      */
     private fun connectBlock(
         graph: ControlFlowGraph,
         stmts: Array<out PyStatement>,
-        entryPoints: List<CFGNode>,
-        exitNode: CFGNode?
+        entryPoints: List<CFGNode>
     ): List<CFGNode> {
         var prev = entryPoints
-        // Sequentially connect each statement, threading previous nodes forward
+        val linearBuffer = mutableListOf<PyStatement>()
+
         for (stmt in stmts) {
-            prev = connectStatement(graph, stmt, prev, exitNode)
+            when (stmt) {
+                // Control-flow statements break the linear sequence
+                is PyIfStatement, is PyWhileStatement, is PyForStatement, is PyReturnStatement -> {
+                    // Flush any buffered linear statements as one node
+                    if (linearBuffer.isNotEmpty()) {
+                        prev = handleLinear(graph, linearBuffer.toTypedArray(), prev)
+                        linearBuffer.clear()
+                    }
+                    prev = connectStatement(graph, stmt, prev, null)
+                }
+                else -> linearBuffer.add(stmt) // buffer linear statements
+            }
         }
+
+        // Flush remaining linear statements
+        if (linearBuffer.isNotEmpty()) {
+            prev = handleLinear(graph, linearBuffer.toTypedArray(), prev)
+        }
+
         return prev
     }
 }

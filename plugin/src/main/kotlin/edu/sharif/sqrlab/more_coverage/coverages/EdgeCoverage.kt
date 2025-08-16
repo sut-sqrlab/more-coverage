@@ -9,7 +9,7 @@ import edu.sharif.sqrlab.more_coverage.models.TestCase
 /**
  * EdgeCoverage generates test cases that cover all edges
  * in the control flow graph (CFG) of a Python function.
- * Uses BFS to explore paths and selects a minimal set of paths.
+ * Back edges (loops) are considered only once per path.
  */
 class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
 
@@ -17,10 +17,7 @@ class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
 
     /**
      * Generates a minimal set of test cases covering all edges
-     * in the function's CFG.
-     *
-     * @param function The PyFunctionImpl to analyze
-     * @return Iterable<TestCase> covering all edges
+     * in the function's CFG. Handles loops by counting back edges once.
      */
     override fun generate(function: PyFunctionImpl): Iterable<TestCase> {
         val testCases = mutableListOf<TestCase>()
@@ -32,7 +29,7 @@ class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
         val nodesStr = cfg.nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
         val edgesStr = cfg.edges.joinToString(", ") { "${it.from.id}->${it.to.id}" }
 
-        // Step 2: Collect all edges as explicit pairs
+        // Step 2: Collect all edges
         val allEdges = cfg.edges.map { it.from to it.to }.toMutableSet()
 
         // Step 3: BFS to collect all paths from sources to sinks
@@ -44,12 +41,18 @@ class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
         while (queue.isNotEmpty()) {
             val path = queue.removeFirst()
             val lastNode = path.last()
-            val successors = cfg.edges.filter { it.from == lastNode }.map { it.to }
+
+            val visitedEdgesInPath = path.zip(path.drop(1)).toSet()
+
+            val successors = cfg.edges
+                .filter { it.from == lastNode }
+                .map { it.to to it.from }
+                .filter { (succ, from) -> Pair(from, succ) !in visitedEdgesInPath }
 
             if (successors.isEmpty()) {
-                allPaths.add(path) // Sink reached
+                allPaths.add(path) // path ends
             } else {
-                for (succ in successors) {
+                for ((succ, _) in successors) {
                     queue.add(path + succ)
                 }
             }
@@ -60,7 +63,7 @@ class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
         val selectedPaths = mutableListOf<List<CFGNode>>()
 
         while (edgesToCover.isNotEmpty()) {
-            // Pick path covering the most yet-uncovered edges
+            // Pick the path that covers the most uncovered edges
             val bestPath = allPaths.maxByOrNull { path ->
                 path.zip(path.drop(1)).count { it in edgesToCover }
             } ?: break
