@@ -54,6 +54,7 @@ object ControlFlowGraphBuilder {
         is PyWhileStatement -> handleWhile(graph, stmt, prevNodes, exitNode)
         is PyForStatement -> handleFor(graph, stmt, prevNodes, exitNode)
         is PyMatchStatement -> handleMatch(graph, stmt, prevNodes, exitNode)
+        is PyTryExceptStatement -> handleTryExcept(graph, stmt, prevNodes, exitNode)
         is PyReturnStatement -> handleReturn(graph, stmt, prevNodes)
         else -> handleLinear(graph, arrayOf(stmt), prevNodes) // simple statement
     }
@@ -303,6 +304,97 @@ object ControlFlowGraphBuilder {
     }
 
     /**
+     * Handles a try-except-finally statement for the CFG.
+     *
+     * Rules:
+     * 1. Creates a single node for the try header.
+     * 2. Sequentially connects statements inside the try body.
+     * 3. All try body statements can jump to except headers on exception.
+     * 4. Creates one node per except handler with proper label.
+     * 5. Sequentially connects statements inside each except body.
+     * 6. Only the last statement of try body and last statement of except bodies connect to finally, if present.
+     *
+     * @param graph CFG being built
+     * @param stmt PyTryExceptStatement to process
+     * @param prevNodes Predecessor nodes
+     * @param exitNode Optional exit node
+     * @return List of CFGNodes that exit the try-except-finally construct
+     */
+    private fun handleTryExcept(
+        graph: ControlFlowGraph,
+        stmt: PyTryExceptStatement,
+        prevNodes: List<CFGNode>,
+        exitNode: CFGNode?
+    ): List<CFGNode> {
+        // --- 1. Create try header node ---
+        val tryNode = CFGNode("n${graph.nodes.size}", "try", stmt)
+        graph.addNode(tryNode)
+        prevNodes.forEach { graph.addEdge(it, tryNode) }
+
+        // --- 2. Connect try body ---
+        val tryBodyExits = connectBlock(graph, stmt.tryPart.statementList.statements, listOf(tryNode))
+
+        // --- 3. Create except header nodes (one per handler) ---
+        val exceptNodes = stmt.exceptParts.map { handler ->
+            val typeText = handler.children
+                .filterIsInstance<PyExpression>()
+                .firstOrNull()?.text
+
+            val targetText = handler.target?.name
+
+            val label = when {
+                typeText != null && targetText != null -> "except $typeText as $targetText"
+                typeText != null -> "except $typeText"
+                else -> "except _"
+            }
+            val node = CFGNode("n${graph.nodes.size}", label, handler)
+            graph.addNode(node)
+            node
+        }
+
+        // --- 4. Connect try body exits to except headers ---
+        tryBodyExits.forEach { tryExit ->
+            exceptNodes.forEach { graph.addEdge(tryExit, it) }
+        }
+
+        // --- 5. Connect each except handler body ---
+        val exceptExits = mutableListOf<CFGNode>()
+        stmt.exceptParts.zip(exceptNodes).forEach { (handler, exceptNode) ->
+            var prevHandlerNodes = listOf(exceptNode)
+            for (bodyStmt in handler.statementList.statements) {
+                prevHandlerNodes = connectStatement(graph, bodyStmt, prevHandlerNodes, null)
+            }
+            exceptExits.addAll(prevHandlerNodes)
+        }
+
+        // --- 6. Finally block if present ---
+        stmt.finallyPart?.let { finallyPart ->
+            val finallyNode = CFGNode("n${graph.nodes.size}", "finally", finallyPart)
+            graph.addNode(finallyNode)
+
+            // Only last statements of try and except bodies connect to finally
+            val lastExits = mutableListOf<CFGNode>()
+            if (tryBodyExits.isNotEmpty()) lastExits.add(tryBodyExits.last())
+            lastExits.addAll(exceptExits)
+
+            lastExits.forEach { graph.addEdge(it, finallyNode) }
+
+            // Connect statements inside finally
+            var prevFinallyNodes = listOf(finallyNode)
+            for (stmt in finallyPart.statementList.statements) {
+                prevFinallyNodes = connectStatement(graph, stmt, prevFinallyNodes, null)
+            }
+
+            return prevFinallyNodes
+        }
+
+        // --- 7. Return all exit nodes if no finally ---
+        return tryBodyExits + exceptExits
+    }
+
+
+
+    /**
      * Connects a sequence of statements (block) into the CFG.
      * Consecutive linear statements are buffered and merged into single nodes.
      *
@@ -322,7 +414,8 @@ object ControlFlowGraphBuilder {
         for (stmt in stmts) {
             when (stmt) {
                 // Control-flow statements break the linear sequence
-                is PyIfStatement, is PyWhileStatement, is PyForStatement, is PyMatchStatement, is PyReturnStatement -> {
+                is PyIfStatement, is PyWhileStatement, is PyForStatement, is PyMatchStatement, is PyReturnStatement,
+                is PyTryExceptStatement -> {
                     // Flush any buffered linear statements as one node
                     if (linearBuffer.isNotEmpty()) {
                         prev = handleLinear(graph, linearBuffer.toTypedArray(), prev)
