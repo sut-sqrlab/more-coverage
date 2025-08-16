@@ -53,6 +53,7 @@ object ControlFlowGraphBuilder {
         is PyIfStatement -> handleIf(graph, stmt, prevNodes, exitNode)
         is PyWhileStatement -> handleWhile(graph, stmt, prevNodes, exitNode)
         is PyForStatement -> handleFor(graph, stmt, prevNodes, exitNode)
+        is PyMatchStatement -> handleMatch(graph, stmt, prevNodes, exitNode)
         is PyReturnStatement -> handleReturn(graph, stmt, prevNodes)
         else -> handleLinear(graph, arrayOf(stmt), prevNodes) // simple statement
     }
@@ -190,6 +191,71 @@ object ControlFlowGraphBuilder {
         return listOf(condNode) // false path exit
     }
 
+
+    /**
+     * Handles a match statement (Python 3.10+ structural pattern matching).
+     *
+     * @param graph CFG being built
+     * @param stmt Match statement
+     * @param prevNodes Predecessor nodes
+     * @param exitNode Optional exit node
+     * @return List of exit nodes from all case branches
+     */
+    private fun handleMatch(
+        graph: ControlFlowGraph,
+        stmt: PyMatchStatement,
+        prevNodes: List<CFGNode>,
+        exitNode: CFGNode?
+    ): List<CFGNode> {
+        // Create the main match node
+        val matchLabel = "match ${stmt.subject?.text ?: ""}"
+        val matchNode = CFGNode("n${graph.nodes.size}", matchLabel, stmt)
+        graph.addNode(matchNode)
+        println("Added MATCH node: ${matchNode.label}")
+
+        // Connect predecessors to the match node
+        prevNodes.forEach {
+            graph.addEdge(it, matchNode)
+            println("Edge: ${it.label} -> ${matchNode.label}")
+        }
+
+        val caseExits = mutableListOf<CFGNode>()
+
+        // Process each case clause
+        for (caseClause in stmt.caseClauses) {
+            // Create a case node
+            val caseLabel = "case ${caseClause.pattern?.text ?: "_"}"
+            val caseNode = CFGNode("n${graph.nodes.size}", caseLabel, stmt)
+            graph.addNode(caseNode)
+            graph.addEdge(matchNode, caseNode)
+            println("Added CASE node: ${caseNode.label}")
+            println("Edge: ${matchNode.label} -> ${caseNode.label}")
+
+            // Connect case body statements sequentially
+            var lastNodes = listOf(caseNode)
+            val statements = caseClause.statementList?.statements ?: emptyArray()
+            for (stmtInCase in statements) {
+                lastNodes = connectStatement(graph, stmtInCase, lastNodes, null)
+            }
+
+            // Collect exits of this case
+            caseExits.addAll(lastNodes)
+        }
+
+        // Merge node after all cases
+        val mergeNode = CFGNode("n${graph.nodes.size}", "match_end", stmt)
+        graph.addNode(mergeNode)
+        println("Added MERGE node: ${mergeNode.label}")
+
+        // Connect all case exits to merge node
+        caseExits.forEach {
+            graph.addEdge(it, mergeNode)
+            println("Edge: ${it.label} -> ${mergeNode.label}")
+        }
+
+        return listOf(mergeNode)
+    }
+
     /**
      * Handles a for loop, creating a condition node and connecting the body with back edges.
      *
@@ -256,7 +322,7 @@ object ControlFlowGraphBuilder {
         for (stmt in stmts) {
             when (stmt) {
                 // Control-flow statements break the linear sequence
-                is PyIfStatement, is PyWhileStatement, is PyForStatement, is PyReturnStatement -> {
+                is PyIfStatement, is PyWhileStatement, is PyForStatement, is PyMatchStatement, is PyReturnStatement -> {
                     // Flush any buffered linear statements as one node
                     if (linearBuffer.isNotEmpty()) {
                         prev = handleLinear(graph, linearBuffer.toTypedArray(), prev)
