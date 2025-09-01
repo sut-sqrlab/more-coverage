@@ -25,14 +25,10 @@ class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
         // Step 0: Build the CFG
         val cfg = ControlFlowGraphBuilder.build(function)
 
-        // Step 1: Prepare debug strings
-        val nodesStr = cfg.nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
-        val edgesStr = cfg.edges.joinToString(", ") { "${it.from.id}->${it.to.id}" }
-
-        // Step 2: Collect all edges
+        // Step 1: Collect all edges
         val allEdges = cfg.edges.map { it.from to it.to }.toMutableSet()
 
-        // Step 3: BFS to collect all paths from sources to sinks
+        // Step 2: BFS to collect all paths from sources to sinks
         val sources = cfg.nodes.filter { node -> cfg.edges.none { it.to == node } }
         val allPaths = mutableListOf<List<CFGNode>>()
         val queue = ArrayDeque<List<CFGNode>>()
@@ -58,32 +54,45 @@ class EdgeCoverage : AbstractCoverageTestGeneratorAction() {
             }
         }
 
-        // Step 4: Greedy selection of minimal paths covering all edges
+        // Step 3: Greedy selection of minimal paths covering all edges
         val edgesToCover = allEdges.toMutableSet()
         val selectedPaths = mutableListOf<List<CFGNode>>()
 
         while (edgesToCover.isNotEmpty()) {
-            // Pick the path that covers the most uncovered edges
             val bestPath = allPaths.maxByOrNull { path ->
                 path.zip(path.drop(1)).count { it in edgesToCover }
             } ?: break
 
             selectedPaths.add(bestPath)
-
-            // Remove edges covered by this path
             edgesToCover.removeAll(bestPath.zip(bestPath.drop(1)))
-
             allPaths.remove(bestPath)
         }
 
-        // Step 5: Generate TestCase objects for selected paths
+        // Step 4: Generate TestCase objects for selected paths
         for ((index, path) in selectedPaths.withIndex()) {
-            val pathDesc = path.joinToString(" -> ") { it.id }
-            val comment = "Nodes: $nodesStr\n# Edges: $edgesStr\n# Path $index: $pathDesc"
+            val edgeList = path.zip(path.drop(1))
+            val coveredLines = path.flatMap { it.lineNumbers }.toSet()
+
+            val pathDesc = path.joinToString(" -> ") {
+                "${it.id}:${it.label.replace("\n", " ")} [lines: ${it.lineNumbers.joinToString(", ")}]"
+            }
+
+            val comment = """
+                # Path $index: $pathDesc
+                # Expected edges: ${edgeList.joinToString(", ") { "${it.first.id}->${it.second.id}" }}
+                # Expected lines: ${coveredLines.joinToString(", ")}
+            """.trimIndent().prependIndent("    ")
+
+            val body = """
+                pass  # TODO: Call your function here, e.g., ${function.name}(args)
+            """.trimIndent()
+
             testCases.add(
                 TestCase(
                     name = "${function.name ?: "func"}_edge_$index",
-                    description = comment
+                    description = comment,
+                    expectedLines = coveredLines,
+                    body = body
                 )
             )
         }

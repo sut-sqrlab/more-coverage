@@ -1,8 +1,25 @@
 package edu.sharif.sqrlab.more_coverage.builders
 
+import com.intellij.psi.PsiElement
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.jetbrains.python.psi.*
 import edu.sharif.sqrlab.more_coverage.models.CFGNode
 import edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph
+
+/**
+ * Returns the 1-based line number of this PsiElement in the file, or null if unavailable.
+ */
+fun PsiElement.getLineNumber(): Int? {
+    val file = containingFile?.virtualFile ?: return null
+    val doc = FileDocumentManager.getInstance().getDocument(file) ?: return null
+    return doc.getLineNumber(textOffset) + 1
+}
+
+/**
+ * Returns the sorted list of distinct line numbers for an array of PsiElements.
+ */
+fun Array<out PsiElement>.getLineNumbers(): List<Int> =
+    this.mapNotNull { it.getLineNumber() }.distinct().sorted()
 
 /**
  * Builds a Control Flow Graph (CFG) from a Python function.
@@ -74,7 +91,12 @@ object ControlFlowGraphBuilder {
     ): List<CFGNode> {
         // Merge statements into one label separated by semicolon
         val label = stmts.joinToString(" ; ") { it.text }
-        val node = CFGNode("n${graph.nodes.size}", label, stmts.first())
+        val node = CFGNode(
+            id = "n${graph.nodes.size}",
+            label = label,
+            element = stmts.first(),
+            lineNumbers = stmts.getLineNumbers()
+        )
         graph.addNode(node)
         println("Added LINEAR node: ${node.label}")
 
@@ -100,7 +122,12 @@ object ControlFlowGraphBuilder {
         stmt: PyReturnStatement,
         prevNodes: List<CFGNode>
     ): List<CFGNode> {
-        val node = CFGNode("n${graph.nodes.size}", stmt.text, stmt)
+        val node = CFGNode(
+            id = "n${graph.nodes.size}",
+            label = stmt.text,
+            element = stmt,
+            lineNumbers = listOfNotNull(stmt.getLineNumber())
+        )
         graph.addNode(node)
         println("Added RETURN node: ${node.label}")
 
@@ -347,7 +374,12 @@ object ControlFlowGraphBuilder {
                 typeText != null -> "except $typeText"
                 else -> "except _"
             }
-            val node = CFGNode("n${graph.nodes.size}", label, handler)
+            val node = CFGNode(
+                id = "n${graph.nodes.size}",
+                label = label,
+                element = handler,
+                lineNumbers = listOfNotNull(handler.getLineNumber())
+            )
             graph.addNode(node)
             node
         }

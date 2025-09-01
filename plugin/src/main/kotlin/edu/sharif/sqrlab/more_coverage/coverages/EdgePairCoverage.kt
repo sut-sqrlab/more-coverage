@@ -21,18 +21,14 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
         // Step 0: Build the CFG
         val cfg = ControlFlowGraphBuilder.build(function)
 
-        // Step 1: Build strings for debugging
-        val nodesStr = cfg.nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
-        val edgesStr = cfg.edges.joinToString(", ") { "${it.from.id}->${it.to.id}" }
-
-        // Step 2: Collect all edge-pairs (n1 -> n2 -> n3) in the CFG
+        // Step 1: Collect all edge-pairs (n1 -> n2 -> n3)
         val allPairs = cfg.edges.flatMap { first ->
             cfg.edges.filter { it.from == first.to }.map { second ->
                 Triple(first.from, first.to, second.to)
             }
-        }.toMutableSet() // remove duplicates
+        }.toMutableSet()
 
-        // Step 3: BFS to generate paths including back edges once
+        // Step 2: BFS to generate paths (allowing back edges once)
         val sources = cfg.nodes.filter { node -> cfg.edges.none { it.to == node } }
         val allPaths = mutableListOf<List<CFGNode>>()
         val queue = ArrayDeque<List<CFGNode>>()
@@ -44,10 +40,9 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
             val successors = cfg.edges.filter { it.from == lastNode }.map { it.to }
 
             if (successors.isEmpty()) {
-                allPaths.add(path) // Sink reached
+                allPaths.add(path)
             } else {
                 for (succ in successors) {
-                    // Allow back edge only once
                     if (succ !in path || isLoopEdge(cfg, lastNode, succ)) {
                         queue.add(path + succ)
                     }
@@ -55,38 +50,52 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
             }
         }
 
-        // Step 4: Greedy selection of minimal paths covering all edge-pairs
+        // Step 3: Greedy selection of minimal paths covering all edge-pairs
         val pairsToCover = allPairs.toMutableSet()
         val selectedPaths = mutableListOf<List<CFGNode>>()
 
         while (pairsToCover.isNotEmpty()) {
             val bestPath = allPaths.maxByOrNull { path ->
-                // Edge-pairs along path
-                val pathPairs = mutableSetOf<Triple<CFGNode, CFGNode, CFGNode>>()
-                for (i in 0 until path.size - 2) {
-                    pathPairs.add(Triple(path[i], path[i + 1], path[i + 2]))
+                (0 until path.size - 2).count { i ->
+                    Triple(path[i], path[i + 1], path[i + 2]) in pairsToCover
                 }
-                pathPairs.count { it in pairsToCover }
             } ?: break
 
-            val coveredPairs = mutableSetOf<Triple<CFGNode, CFGNode, CFGNode>>()
-            for (i in 0 until bestPath.size - 2) {
-                val t = Triple(bestPath[i], bestPath[i + 1], bestPath[i + 2])
-                if (t in pairsToCover) coveredPairs.add(t)
-            }
+            val coveredPairs = (0 until bestPath.size - 2).map { i ->
+                Triple(bestPath[i], bestPath[i + 1], bestPath[i + 2])
+            }.filter { it in pairsToCover }.toSet()
+
             pairsToCover.removeAll(coveredPairs)
             selectedPaths.add(bestPath)
             allPaths.remove(bestPath)
         }
 
-        // Step 5: Generate TestCase objects for each selected path
+        // Step 4: Generate TestCase objects for selected paths
         for ((index, path) in selectedPaths.withIndex()) {
-            val pathDesc = path.joinToString(" -> ") { it.id }
-            val comment = "Nodes: $nodesStr\n# Edges: $edgesStr\n# Edge-Pair Path $index: $pathDesc"
+            val coveredLines = path.flatMap { it.lineNumbers }.toSet()
+            val pathDesc = path.joinToString(" -> ") {
+                "${it.id}:${it.label.replace("\n", " ")} [lines: ${it.lineNumbers.joinToString(", ")}]"
+            }
+            val pairList = (0 until path.size - 2).map { i ->
+                "${path[i].id}->${path[i + 1].id}->${path[i + 2].id}"
+            }
+
+            val comment = """
+                # Edge-Pair Path $index: $pathDesc
+                # Expected edge-pairs: ${pairList.joinToString(", ")}
+                # Expected lines: ${coveredLines.joinToString(", ")}
+            """.trimIndent().prependIndent("    ")
+
+            val body = """
+                pass  # TODO: Call your function here, e.g., ${function.name}(args)
+            """.trimIndent()
+
             testCases.add(
                 TestCase(
                     name = "${function.name ?: "func"}_edgepair_$index",
-                    description = comment
+                    description = comment,
+                    expectedLines = coveredLines,
+                    body = body
                 )
             )
         }
@@ -98,7 +107,11 @@ class EdgePairCoverage : AbstractCoverageTestGeneratorAction() {
      * Determines if an edge is a back edge forming a loop.
      * Used to allow traversing back edges once for edge-pair coverage.
      */
-    private fun isLoopEdge(cfg: edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph, from: CFGNode, to: CFGNode): Boolean {
+    private fun isLoopEdge(
+        cfg: edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph,
+        from: CFGNode,
+        to: CFGNode
+    ): Boolean {
         return cfg.edges.any { it.from == from && it.to == to && cfg.nodes.indexOf(to) <= cfg.nodes.indexOf(from) }
     }
 }

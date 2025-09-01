@@ -100,9 +100,28 @@ class PrimePathCoverage : AbstractCoverageTestGeneratorAction() {
 
         // Step 5: Generate TestCase objects for all prime paths
         for ((index, path) in primePaths.withIndex()) {
-            val pathDesc = path.joinToString(" -> ") { "${it.id}:${it.label.replace("\n", " ")}" }
-            val comment = "Nodes: $nodesStr\n# Edges: $edgesStr\n# Prime Path $index: $pathDesc"
-            testCases.add(TestCase("${function.name ?: "func"}_prime_$index", comment))
+            val pathDesc = path.joinToString(" -> ") {
+                "${it.id}:${it.label.replace("\n", " ")} [lines: ${it.lineNumbers.joinToString(", ")}]"
+            }
+            val coveredLines = path.flatMap { it.lineNumbers }.toSet()
+            val comment = """
+                # Nodes: $nodesStr
+                # Edges: $edgesStr
+                # Prime Path $index: $pathDesc
+            """.trimIndent().prependIndent("    ")
+
+            val body = """
+                pass  # TODO: Call your function here, e.g., ${function.name}(args)
+            """.trimIndent()
+
+            testCases.add(
+                TestCase(
+                    name = "${function.name ?: "func"}_prime_$index",
+                    description = comment,
+                    body = body,
+                    expectedLines = coveredLines
+                )
+            )
         }
 
         return testCases

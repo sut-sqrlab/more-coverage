@@ -12,7 +12,8 @@ import com.intellij.psi.PsiElement
 data class CFGNode(
     val id: String,
     val label: String,
-    val element: PsiElement? = null
+    val element: PsiElement? = null,
+    val lineNumbers: List<Int> = emptyList()
 )
 
 /**

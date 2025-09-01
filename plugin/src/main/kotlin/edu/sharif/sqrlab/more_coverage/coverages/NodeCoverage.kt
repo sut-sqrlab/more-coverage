@@ -6,11 +6,6 @@ import edu.sharif.sqrlab.more_coverage.builders.ControlFlowGraphBuilder
 import edu.sharif.sqrlab.more_coverage.models.CFGNode
 import edu.sharif.sqrlab.more_coverage.models.TestCase
 
-/**
- * NodeCoverage generates test cases that cover all nodes
- * in the CFG of a Python function.
- * Handles loops by including nodes reachable via back edges at least once.
- */
 class NodeCoverage : AbstractCoverageTestGeneratorAction() {
 
     override val name: String = "NodeCoverage"
@@ -22,7 +17,9 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
         val cfg = ControlFlowGraphBuilder.build(function)
 
         // Step 1: Prepare debug strings
-        val nodesStr = cfg.nodes.joinToString(", ") { "${it.id}:${it.label.replace("\n", " ")}" }
+        val nodesStr = cfg.nodes.joinToString(", ") {
+            "${it.id}:${it.label.replace("\n", " ")} [lines: ${it.lineNumbers.joinToString(", ")}]"
+        }
         val edgesStr = cfg.edges.joinToString(", ") { "${it.from.id}->${it.to.id}" }
 
         // Step 2: BFS to collect all paths from sources to sinks
@@ -41,7 +38,6 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
             } else {
                 for (succ in successors) {
                     if (succ !in path || isLoopEdge(cfg, lastNode, succ)) {
-                        // Allow back edge once
                         queue.add(path + succ)
                     }
                 }
@@ -64,18 +60,34 @@ class NodeCoverage : AbstractCoverageTestGeneratorAction() {
 
         // Step 4: Generate TestCase objects for selected paths
         for ((index, path) in selectedPaths.withIndex()) {
-            val pathDesc = path.joinToString(" -> ") { "${it.id}:${it.label.replace("\n", " ")}" }
-            val comment = "Nodes: $nodesStr\n# Edges: $edgesStr\n# Path $index: $pathDesc"
-            testCases.add(TestCase("${function.name ?: "func"}_node_$index", comment))
+            val pathDesc = path.joinToString(" -> ") {
+                "${it.id}:${it.label.replace("\n", " ")} [lines: ${it.lineNumbers.joinToString(", ")}]"
+            }
+
+            val coveredLines = path.flatMap { it.lineNumbers }.toSet()
+
+            val comment = """
+                # Path $index: $pathDesc
+                # Expected lines: ${coveredLines.joinToString(", ")}
+            """.trimIndent().prependIndent("    ")
+
+            val body = """
+                pass  # TODO: Call your function here, e.g., ${function.name}(args)
+            """.trimIndent()
+
+            testCases.add(
+                TestCase(
+                    name = "${function.name ?: "func"}_node_$index",
+                    description = comment,
+                    expectedLines = coveredLines,
+                    body = body
+                )
+            )
         }
 
         return testCases
     }
 
-    /**
-     * Determines if an edge is a back edge forming a loop.
-     * Used to allow traversing back edges once for node coverage.
-     */
     private fun isLoopEdge(cfg: edu.sharif.sqrlab.more_coverage.models.ControlFlowGraph, from: CFGNode, to: CFGNode): Boolean {
         return cfg.edges.any { it.from == from && it.to == to && cfg.nodes.indexOf(to) <= cfg.nodes.indexOf(from) }
     }
