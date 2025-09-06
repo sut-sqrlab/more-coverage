@@ -84,6 +84,15 @@ object ControlFlowGraphBuilder {
      * @param prevNodes Predecessor nodes
      * @return List containing the created CFGNode
      */
+    private fun createNode(graph: ControlFlowGraph, label: String, element: PsiElement): CFGNode {
+        return CFGNode(
+            id = "n${graph.nodes.size}",
+            label = label,
+            element = element,
+            lineNumbers = listOfNotNull(element.getLineNumber())
+        )
+    }
+
     private fun handleLinear(
         graph: ControlFlowGraph,
         stmts: Array<out PyStatement>,
@@ -122,12 +131,7 @@ object ControlFlowGraphBuilder {
         stmt: PyReturnStatement,
         prevNodes: List<CFGNode>
     ): List<CFGNode> {
-        val node = CFGNode(
-            id = "n${graph.nodes.size}",
-            label = stmt.text,
-            element = stmt,
-            lineNumbers = listOfNotNull(stmt.getLineNumber())
-        )
+        val node = createNode(graph, stmt.text, stmt)
         graph.addNode(node)
         println("Added RETURN node: ${node.label}")
 
@@ -156,7 +160,7 @@ object ControlFlowGraphBuilder {
     ): List<CFGNode> {
         // Create CFG node for the if condition
         val conditionText = stmt.ifPart.condition?.text ?: "if"
-        val ifNode = CFGNode("n${graph.nodes.size}", conditionText, stmt)
+        val ifNode = createNode(graph, conditionText, stmt)
         graph.addNode(ifNode)
         println("Added IF node: ${ifNode.label}")
 
@@ -194,7 +198,7 @@ object ControlFlowGraphBuilder {
     ): List<CFGNode> {
         // Create node for the loop condition
         val conditionText = stmt.whilePart?.condition?.text ?: "while"
-        val condNode = CFGNode("n${graph.nodes.size}", conditionText, stmt)
+        val condNode = createNode(graph, conditionText, stmt)
         graph.addNode(condNode)
         println("Added WHILE condition node: ${condNode.label}")
 
@@ -237,7 +241,7 @@ object ControlFlowGraphBuilder {
     ): List<CFGNode> {
         // Create the main match node
         val matchLabel = "match ${stmt.subject?.text ?: ""}"
-        val matchNode = CFGNode("n${graph.nodes.size}", matchLabel, stmt)
+        val matchNode = createNode(graph, matchLabel, stmt)
         graph.addNode(matchNode)
         println("Added MATCH node: ${matchNode.label}")
 
@@ -253,7 +257,7 @@ object ControlFlowGraphBuilder {
         for (caseClause in stmt.caseClauses) {
             // Create a case node
             val caseLabel = "case ${caseClause.pattern?.text ?: "_"}"
-            val caseNode = CFGNode("n${graph.nodes.size}", caseLabel, stmt)
+            val caseNode = createNode(graph, caseLabel, caseClause)
             graph.addNode(caseNode)
             graph.addEdge(matchNode, caseNode)
             println("Added CASE node: ${caseNode.label}")
@@ -270,8 +274,7 @@ object ControlFlowGraphBuilder {
             caseExits.addAll(lastNodes)
         }
 
-        // Merge node after all cases
-        val mergeNode = CFGNode("n${graph.nodes.size}", "match_end", stmt)
+        val mergeNode = createNode(graph, "match_end", stmt)
         graph.addNode(mergeNode)
         println("Added MERGE node: ${mergeNode.label}")
 
@@ -354,7 +357,7 @@ object ControlFlowGraphBuilder {
         exitNode: CFGNode?
     ): List<CFGNode> {
         // --- 1. Create try header node ---
-        val tryNode = CFGNode("n${graph.nodes.size}", "try", stmt)
+        val tryNode = createNode(graph, "try", stmt)
         graph.addNode(tryNode)
         prevNodes.forEach { graph.addEdge(it, tryNode) }
 
@@ -363,10 +366,7 @@ object ControlFlowGraphBuilder {
 
         // --- 3. Create except header nodes (one per handler) ---
         val exceptNodes = stmt.exceptParts.map { handler ->
-            val typeText = handler.children
-                .filterIsInstance<PyExpression>()
-                .firstOrNull()?.text
-
+            val typeText = handler.children.filterIsInstance<PyExpression>().firstOrNull()?.text
             val targetText = handler.target?.name
 
             val label = when {
@@ -374,19 +374,18 @@ object ControlFlowGraphBuilder {
                 typeText != null -> "except $typeText"
                 else -> "except _"
             }
-            val node = CFGNode(
-                id = "n${graph.nodes.size}",
-                label = label,
-                element = handler,
-                lineNumbers = listOfNotNull(handler.getLineNumber())
-            )
+            val node = createNode(graph, label, handler)
             graph.addNode(node)
             node
         }
 
-        // --- 4. Connect try body exits to except headers ---
-        tryBodyExits.forEach { tryExit ->
-            exceptNodes.forEach { graph.addEdge(tryExit, it) }
+        // Connect ALL try nodes (body exits) to except handlers
+        val allTryNodes = tryBodyExits
+        allTryNodes.forEach { tryExit ->
+            exceptNodes.forEach {
+                graph.addEdge(tryExit, it)
+                println("Edge (exception): ${tryExit.label} -> ${it.label}")
+            }
         }
 
         // --- 5. Connect each except handler body ---
@@ -401,20 +400,23 @@ object ControlFlowGraphBuilder {
 
         // --- 6. Finally block if present ---
         stmt.finallyPart?.let { finallyPart ->
-            val finallyNode = CFGNode("n${graph.nodes.size}", "finally", finallyPart)
+            val finallyNode = createNode(graph, "finally", finallyPart)
             graph.addNode(finallyNode)
+            println("Added FINALLY node: ${finallyNode.label}")
 
             // Only last statements of try and except bodies connect to finally
             val lastExits = mutableListOf<CFGNode>()
             if (tryBodyExits.isNotEmpty()) lastExits.add(tryBodyExits.last())
             lastExits.addAll(exceptExits)
 
-            lastExits.forEach { graph.addEdge(it, finallyNode) }
+            lastExits.forEach {
+                graph.addEdge(it, finallyNode)
+                println("Edge: ${it.label} -> ${finallyNode.label}")
+            }
 
-            // Connect statements inside finally
             var prevFinallyNodes = listOf(finallyNode)
-            for (stmt in finallyPart.statementList.statements) {
-                prevFinallyNodes = connectStatement(graph, stmt, prevFinallyNodes, null)
+            for (stmtInFinally in finallyPart.statementList.statements) {
+                prevFinallyNodes = connectStatement(graph, stmtInFinally, prevFinallyNodes, null)
             }
 
             return prevFinallyNodes
@@ -445,10 +447,8 @@ object ControlFlowGraphBuilder {
 
         for (stmt in stmts) {
             when (stmt) {
-                // Control-flow statements break the linear sequence
-                is PyIfStatement, is PyWhileStatement, is PyForStatement, is PyMatchStatement, is PyReturnStatement,
-                is PyTryExceptStatement -> {
-                    // Flush any buffered linear statements as one node
+                is PyIfStatement, is PyWhileStatement, is PyForStatement,
+                is PyMatchStatement, is PyReturnStatement, is PyTryExceptStatement -> {
                     if (linearBuffer.isNotEmpty()) {
                         prev = handleLinear(graph, linearBuffer.toTypedArray(), prev)
                         linearBuffer.clear()
